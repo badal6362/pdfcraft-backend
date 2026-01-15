@@ -184,9 +184,11 @@ app.post("/split", upload.single("pdf"), async (req, res) => {
 });
 
 /* =========================
-   DOC TO PDF
+   DOC TO PDF (FIXED)
 ========================= */
 app.post("/doc-to-pdf", upload.single("doc"), (req, res) => {
+  let responded = false;
+
   try {
     if (!req.file) {
       return res.status(400).send("No document uploaded");
@@ -196,11 +198,7 @@ app.post("/doc-to-pdf", upload.single("doc"), (req, res) => {
     const outputFile = `converted-${Date.now()}.pdf`;
     const outputPath = path.join(outputDir, outputFile);
 
-    const libreofficeCmd =
-      process.platform === "win32"
-        ? "soffice"
-        : "libreoffice";
-
+    // IMPORTANT: Docker/Linux uses `libreoffice`
     const args = [
       "--headless",
       "--convert-to", "pdf",
@@ -208,37 +206,52 @@ app.post("/doc-to-pdf", upload.single("doc"), (req, res) => {
       inputPath
     ];
 
-    const lo = spawn(libreofficeCmd, args);
+    const lo = spawn("libreoffice", args);
 
     lo.on("error", (err) => {
       console.error("LIBREOFFICE ERROR:", err);
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      return res.status(500).send("Conversion failed");
+      if (!responded) {
+        responded = true;
+        res.status(500).send("Conversion failed");
+      }
     });
 
     lo.on("close", () => {
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
 
-      // LibreOffice names output same as input
-      const generatedPdf = path.join(
-        outputDir,
-        path.basename(inputPath).replace(path.extname(inputPath), ".pdf")
+      // Find the generated PDF (LibreOffice keeps original filename)
+      const files = fs.readdirSync(outputDir);
+      const generated = files.find(f =>
+        f.endsWith(".pdf") && f.includes(path.basename(inputPath))
       );
 
-      if (!fs.existsSync(generatedPdf)) {
-        return res.status(500).send("Conversion failed");
+      if (!generated) {
+        if (!responded) {
+          responded = true;
+          return res.status(500).send("Conversion failed");
+        }
+        return;
       }
 
-      fs.renameSync(generatedPdf, outputPath);
+      const generatedPath = path.join(outputDir, generated);
 
-      res.download(outputPath, outputFile, () => {
-        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-      });
+      fs.renameSync(generatedPath, outputPath);
+
+      if (!responded) {
+        responded = true;
+        res.download(outputPath, outputFile, () => {
+          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        });
+      }
     });
 
   } catch (err) {
     console.error("DOC TO PDF ERROR:", err);
-    res.status(500).send("Conversion failed");
+    if (!responded) {
+      responded = true;
+      res.status(500).send("Conversion failed");
+    }
   }
 });
 
