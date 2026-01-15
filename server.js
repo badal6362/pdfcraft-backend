@@ -66,26 +66,29 @@ app.post("/merge", upload.array("pdfs"), async (req, res) => {
    COMPRESS PDF (LEVELS)
 ========================= */
 app.post("/compress", upload.single("pdf"), (req, res) => {
+  let responded = false;
+
   try {
-    if (!req.file) return res.status(400).send("No PDF uploaded");
+    if (!req.file) {
+      return res.status(400).send("No PDF uploaded");
+    }
 
     const inputPath = req.file.path;
-    const outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
+    const outputFile = `compressed-${Date.now()}.pdf`;
+    const outputPath = path.join(outputDir, outputFile);
 
     const level = req.body.level || "medium";
-    const map = {
+
+    const pdfSettingsMap = {
       low: "/printer",
       medium: "/ebook",
       high: "/screen"
     };
 
-    const gsPath =
-      "C:\\Program Files\\gs\\gs10.06.0\\bin\\gswin64c.exe";
-
-    const args = [
+    const gsArgs = [
       "-sDEVICE=pdfwrite",
       "-dCompatibilityLevel=1.4",
-      `-dPDFSETTINGS=${map[level] || "/ebook"}`,
+      `-dPDFSETTINGS=${pdfSettingsMap[level] || "/ebook"}`,
       "-dNOPAUSE",
       "-dQUIET",
       "-dBATCH",
@@ -93,31 +96,46 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
       inputPath
     ];
 
-    const gs = spawn(gsPath, args);
+    const gs = spawn(GS_PATH, gsArgs);
 
     gs.on("error", err => {
       console.error("GHOSTSCRIPT ERROR:", err);
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-      res.status(500).send("Compression failed");
+
+      if (!responded) {
+        responded = true;
+        return res.status(500).send("PDF compression failed");
+      }
     });
 
     gs.on("close", code => {
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
 
       if (code !== 0 || !fs.existsSync(outputPath)) {
-        return res.status(500).send("Compression failed");
+        if (!responded) {
+          responded = true;
+          return res.status(500).send("PDF compression failed");
+        }
+        return;
       }
 
-      res.download(outputPath, () => {
-        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-      });
+      if (!responded) {
+        responded = true;
+        res.download(outputPath, outputFile, () => {
+          if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        });
+      }
     });
 
   } catch (err) {
     console.error("COMPRESS ERROR:", err);
-    res.status(500).send("Compression failed");
+    if (!responded) {
+      responded = true;
+      res.status(500).send("PDF compression failed");
+    }
   }
 });
+
 
 /* =========================
    SPLIT PDF
