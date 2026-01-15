@@ -184,6 +184,65 @@ app.post("/split", upload.single("pdf"), async (req, res) => {
 });
 
 /* =========================
+   DOC TO PDF
+========================= */
+app.post("/doc-to-pdf", upload.single("doc"), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).send("No document uploaded");
+    }
+
+    const inputPath = req.file.path;
+    const outputFile = `converted-${Date.now()}.pdf`;
+    const outputPath = path.join(outputDir, outputFile);
+
+    const libreofficeCmd =
+      process.platform === "win32"
+        ? "soffice"
+        : "libreoffice";
+
+    const args = [
+      "--headless",
+      "--convert-to", "pdf",
+      "--outdir", outputDir,
+      inputPath
+    ];
+
+    const lo = spawn(libreofficeCmd, args);
+
+    lo.on("error", (err) => {
+      console.error("LIBREOFFICE ERROR:", err);
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+      return res.status(500).send("Conversion failed");
+    });
+
+    lo.on("close", () => {
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+
+      // LibreOffice names output same as input
+      const generatedPdf = path.join(
+        outputDir,
+        path.basename(inputPath).replace(path.extname(inputPath), ".pdf")
+      );
+
+      if (!fs.existsSync(generatedPdf)) {
+        return res.status(500).send("Conversion failed");
+      }
+
+      fs.renameSync(generatedPdf, outputPath);
+
+      res.download(outputPath, outputFile, () => {
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+      });
+    });
+
+  } catch (err) {
+    console.error("DOC TO PDF ERROR:", err);
+    res.status(500).send("Conversion failed");
+  }
+});
+
+/* =========================
    START SERVER
 ========================= */
 console.log("✅ SPLIT ROUTE LOADED");
