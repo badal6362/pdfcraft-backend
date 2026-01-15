@@ -12,6 +12,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
+   GHOSTSCRIPT (CROSS-PLATFORM)
+========================= */
+const GS_PATH = process.platform === "win32"
+  ? "C:\\Program Files\\gs\\gs10.06.0\\bin\\gswin64c.exe"
+  : "gs";
+
+/* =========================
    PATHS & DIRECTORIES
 ========================= */
 const uploadDir = path.resolve(__dirname, "uploads");
@@ -42,10 +49,8 @@ app.post("/merge", upload.array("pdfs"), async (req, res) => {
     for (const file of req.files) {
       const bytes = fs.readFileSync(file.path);
       const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
-
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
       pages.forEach(p => mergedPdf.addPage(p));
-
       if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     }
 
@@ -63,32 +68,28 @@ app.post("/merge", upload.array("pdfs"), async (req, res) => {
 });
 
 /* =========================
-   COMPRESS PDF (LEVELS)
+   COMPRESS PDF (FIXED)
 ========================= */
 app.post("/compress", upload.single("pdf"), (req, res) => {
   let responded = false;
 
   try {
-    if (!req.file) {
-      return res.status(400).send("No PDF uploaded");
-    }
+    if (!req.file) return res.status(400).send("No PDF uploaded");
 
     const inputPath = req.file.path;
-    const outputFile = `compressed-${Date.now()}.pdf`;
-    const outputPath = path.join(outputDir, outputFile);
+    const outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
 
     const level = req.body.level || "medium";
-
-    const pdfSettingsMap = {
+    const map = {
       low: "/printer",
       medium: "/ebook",
       high: "/screen"
     };
 
-    const gsArgs = [
+    const args = [
       "-sDEVICE=pdfwrite",
       "-dCompatibilityLevel=1.4",
-      `-dPDFSETTINGS=${pdfSettingsMap[level] || "/ebook"}`,
+      `-dPDFSETTINGS=${map[level] || "/ebook"}`,
       "-dNOPAUSE",
       "-dQUIET",
       "-dBATCH",
@@ -96,15 +97,14 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
       inputPath
     ];
 
-    const gs = spawn(GS_PATH, gsArgs);
+    const gs = spawn(GS_PATH, args);
 
     gs.on("error", err => {
       console.error("GHOSTSCRIPT ERROR:", err);
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
-
       if (!responded) {
         responded = true;
-        return res.status(500).send("PDF compression failed");
+        res.status(500).send("Compression failed");
       }
     });
 
@@ -114,14 +114,14 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
       if (code !== 0 || !fs.existsSync(outputPath)) {
         if (!responded) {
           responded = true;
-          return res.status(500).send("PDF compression failed");
+          return res.status(500).send("Compression failed");
         }
         return;
       }
 
       if (!responded) {
         responded = true;
-        res.download(outputPath, outputFile, () => {
+        res.download(outputPath, () => {
           if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
         });
       }
@@ -131,11 +131,10 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
     console.error("COMPRESS ERROR:", err);
     if (!responded) {
       responded = true;
-      res.status(500).send("PDF compression failed");
+      res.status(500).send("Compression failed");
     }
   }
 });
-
 
 /* =========================
    SPLIT PDF
@@ -192,4 +191,3 @@ console.log("✅ SPLIT ROUTE LOADED");
 app.listen(3000, () => {
   console.log("Backend running at http://localhost:3000");
 });
-;
