@@ -9,14 +9,21 @@ const { spawn } = require("child_process");
 const app = express();
 
 /* =========================
-   CORS (FIXED FOR BROWSERS)
+   CORS (SAFE – NO WILDCARD ROUTES)
 ========================= */
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
-app.options("*", cors());
+
+// SAFE preflight handler (NO app.options("*"))
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -76,7 +83,7 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
   const inputPath = req.file.path;
   const outPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
 
-  const levelMap = {
+  const quality = {
     low: "/printer",
     medium: "/ebook",
     high: "/screen"
@@ -85,7 +92,7 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
   const args = [
     "-sDEVICE=pdfwrite",
     "-dCompatibilityLevel=1.4",
-    `-dPDFSETTINGS=${levelMap[req.body.level] || "/ebook"}`,
+    `-dPDFSETTINGS=${quality[req.body.level] || "/ebook"}`,
     "-dNOPAUSE",
     "-dQUIET",
     "-dBATCH",
@@ -119,9 +126,10 @@ app.post("/split", upload.single("pdf"), async (req, res) => {
 
     const [s, e] = req.body.range.split("-").map(n => parseInt(n) - 1);
 
-    const src = await PDFDocument.load(fs.readFileSync(req.file.path), {
-      ignoreEncryption: true
-    });
+    const src = await PDFDocument.load(
+      fs.readFileSync(req.file.path),
+      { ignoreEncryption: true }
+    );
 
     if (e >= src.getPageCount()) {
       fs.unlinkSync(req.file.path);
@@ -172,9 +180,10 @@ app.post("/doc-to-pdf", upload.single("doc"), (req, res) => {
   lo.on("close", () => {
     fs.unlinkSync(inputPath);
 
-    const pdfName = path.basename(inputPath).replace(path.extname(inputPath), ".pdf");
-    const generated = path.join(outputDir, pdfName);
+    const pdfName =
+      path.basename(inputPath).replace(path.extname(inputPath), ".pdf");
 
+    const generated = path.join(outputDir, pdfName);
     if (!fs.existsSync(generated)) {
       return res.status(500).send("Conversion failed");
     }
