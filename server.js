@@ -9,27 +9,19 @@ const { spawn } = require("child_process");
 const app = express();
 
 /* =========================
-   CORS (SAFE – NO WILDCARD ROUTES)
+   CORS
 ========================= */
 app.use(cors({
   origin: "*",
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type"]
 }));
-
-// SAFE preflight handler (NO app.options("*"))
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
-   PATHS
+   DIRECTORIES
 ========================= */
 const uploadDir = path.join(__dirname, "uploads");
 const outputDir = path.join(__dirname, "output");
@@ -38,11 +30,11 @@ if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
 /* =========================
-   MULTER (10MB)
+   MULTER
 ========================= */
 const upload = multer({
   dest: uploadDir,
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
 });
 
 /* =========================
@@ -83,6 +75,11 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
   const inputPath = req.file.path;
   const outPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
 
+  const gsCommand =
+    process.platform === "win32"
+      ? "C:\Program Files\gs\gs10.06.0\bin\gswin64c.exe"
+      : "gs";
+
   const quality = {
     low: "/printer",
     medium: "/ebook",
@@ -100,7 +97,7 @@ app.post("/compress", upload.single("pdf"), (req, res) => {
     inputPath
   ];
 
-  const gs = spawn("gs", args);
+  const gs = spawn(gsCommand, args);
 
   gs.on("error", err => {
     console.error("GHOSTSCRIPT ERROR:", err);
@@ -162,14 +159,21 @@ app.post("/doc-to-pdf", upload.single("doc"), (req, res) => {
 
   const inputPath = req.file.path;
 
+  const loCommand =
+    process.platform === "win32"
+      ? "C:\Program Files\LibreOffice\program\soffice.exe"
+      : "libreoffice";
+
   const args = [
     "--headless",
-    "--convert-to", "pdf",
-    "--outdir", outputDir,
+    "--convert-to",
+    "pdf",
+    "--outdir",
+    outputDir,
     inputPath
   ];
 
-  const lo = spawn("libreoffice", args);
+  const lo = spawn(loCommand, args);
 
   lo.on("error", err => {
     console.error("LIBREOFFICE ERROR:", err);
@@ -177,13 +181,18 @@ app.post("/doc-to-pdf", upload.single("doc"), (req, res) => {
     res.status(500).send("Conversion failed");
   });
 
-  lo.on("close", () => {
+  lo.on("close", code => {
     fs.unlinkSync(inputPath);
+
+    if (code !== 0) {
+      return res.status(500).send("Conversion failed");
+    }
 
     const pdfName =
       path.basename(inputPath).replace(path.extname(inputPath), ".pdf");
 
     const generated = path.join(outputDir, pdfName);
+
     if (!fs.existsSync(generated)) {
       return res.status(500).send("Conversion failed");
     }
